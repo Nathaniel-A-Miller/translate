@@ -19,7 +19,7 @@ st.set_page_config(
     layout="centered"
 )
 
-st.title("🎯 Enterprise PDF-to-Word Visual AI Translator")
+st.title("PDF-to-Word Visual AI Translator")
 st.write("Translates complex documents while maintaining layout blocks, headers, and page structures.")
 
 # Initialize Persistent Session State for Downloads (Prevents Nested Button Trap)
