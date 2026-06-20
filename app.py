@@ -208,9 +208,6 @@ if uploaded_file and st.button("Execute Translation Blueprint"):
                 run.font.name = 'Calibri'
                 run.font.size = Pt(11)
 
-        if idx < total_pages - 1:
-            doc.add_page_break()
-
         progress_bar.progress((idx + 1) / total_pages)
         time.sleep(0.5)
 
