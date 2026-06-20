@@ -29,7 +29,7 @@ st.divider()
 # 3. User Controls
 uploaded_file = st.file_uploader("Upload your source document (PDF format only):", type="pdf")
 target_lang = st.selectbox(
-    "Choose target language for translation:",
+    "Translate into:",
     ["English", "Spanish", "French", "German", "Japanese", "Simplified Chinese", "Italian", "Portuguese"]
 )
 
