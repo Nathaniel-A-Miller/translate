@@ -227,7 +227,7 @@ if uploaded_file and st.button("Execute Translation Blueprint"):
 # =====================================================================
 if st.session_state.translated_docx_bytes is not None:
     st.write("---")
-    st.success("🎉 Document Translation Built Successfully!")
+    st.success("🎉 Document Translation Built Successfully! (right click and select Resume if you get a permission error)")
 
     st.download_button(
         label="📥 Download Translated Word Document (.docx)",
