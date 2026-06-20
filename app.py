@@ -31,7 +31,7 @@ if "current_file_name" not in st.session_state:
 # =====================================================================
 # 2. MASTER SECURITY ACCESS GATE
 # =====================================================================
-MASTER_PASSWORD = st.secrets.get("APP_PASSWORD", "SecretCompanyAccess2026")
+MASTER_PASSWORD = st.secrets.get("APP_PASSWORD")
 user_password = st.text_input("Enter Cloud Access Password:", type="password")
 
 if user_password != MASTER_PASSWORD:
