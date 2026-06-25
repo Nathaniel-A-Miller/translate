@@ -1,7 +1,6 @@
 import io
 import time
 import streamlit as st
-from pypdf import PdfReader
 from docx import Document
 from docx.shared import RGBColor, Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -10,6 +9,7 @@ from google.genai import types
 from google.genai.errors import APIError
 from pydantic import BaseModel, Field
 from typing import List
+from pdf2image import convert_from_bytes
 
 # =====================================================================
 # 1. APPLICATION INITIALIZATION & CONFIGURATION
@@ -78,9 +78,6 @@ class PageLayoutTranslation(BaseModel):
         ...,
         description="Sequential list of all structural layout blocks translated from the page."
     )
-
-# Make sure to run: pip install pdf2image
-from pdf2image import convert_from_bytes
 
 # =====================================================================
 # 5. TRANSLATION PIPELINE CORE ENGINE (UPDATED FOR VISUAL MULTIMODAL)
