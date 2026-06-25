@@ -9,7 +9,7 @@ from google.genai import types
 from google.genai.errors import APIError
 from pydantic import BaseModel, Field
 from typing import List
-from pdf2image import convert_from_bytes
+from pdf2image import convert_from_bytes, pdfinfo_from_bytes
 
 # =====================================================================
 # 1. APPLICATION INITIALIZATION & CONFIGURATION
@@ -87,13 +87,14 @@ if uploaded_file and st.button("Execute Translation Blueprint"):
 
     # Read file bytes for pdf2image
     file_bytes = uploaded_file.read()
-    
-    # Convert PDF pages to images so Gemini can visually "read" the Arabic text
+
+    # Get the page count WITHOUT rendering every page into memory at once.
+    # Rendering all pages up front (the old behavior) blows past Streamlit
+    # Cloud's memory limit on multi-page PDFs and OOM-kills the process.
     try:
-        pages_images = convert_from_bytes(file_bytes)
-        total_pages = len(pages_images)
+        total_pages = pdfinfo_from_bytes(file_bytes)["Pages"]
     except Exception as e:
-        st.error(f"Could not convert PDF to images. Is poppler installed? Error: {e}")
+        st.error(f"Could not read PDF. Is poppler installed? Error: {e}")
         st.stop()
 
     if total_pages == 0:
@@ -106,14 +107,31 @@ if uploaded_file and st.button("Execute Translation Blueprint"):
 
     previous_page_context = "This is the first page. No prior context exists."
     pipeline_failed = False
+    failed_pages = []
 
-    for idx, page_image in enumerate(pages_images):
+    for idx in range(total_pages):
         status_msg.text(f"Visually processing & translating page {idx + 1} of {total_pages}...")
+
+        # Render ONLY this page, at a memory-friendly DPI, then free it before
+        # moving on. Keeps peak memory flat no matter how long the PDF is.
+        try:
+            rendered = convert_from_bytes(
+                file_bytes, dpi=150, first_page=idx + 1, last_page=idx + 1
+            )
+        except Exception as e:
+            st.error(f"Could not render page {idx + 1}. Is poppler installed? Error: {e}")
+            pipeline_failed = True
+            break
+        page_image = rendered[0]
 
         # Convert PIL Image to bytes for Gemini API
         img_byte_arr = io.BytesIO()
         page_image.save(img_byte_arr, format='JPEG')
         img_bytes = img_byte_arr.getvalue()
+
+        # Release the rendered image immediately
+        page_image.close()
+        del rendered, page_image
 
         # Update the prompt to tell Gemini to look at the image and ignore watermarks
         prompt = f"""
@@ -157,12 +175,20 @@ if uploaded_file and st.button("Execute Translation Blueprint"):
                     status_msg.warning(f"Page {idx + 1}: Error occurred. Retrying once... ({e})")
                     time.sleep(2)
                     continue
-                st.error(f"Page {idx + 1} failed after retry. Stopping pipeline. Error: {e}")
-                pipeline_failed = True
-                break
+                # Non-fatal: skip this one page rather than discarding the whole run.
+                st.warning(f"Page {idx + 1} failed after retry — skipping it. Error: {e}")
+                failed_pages.append(idx + 1)
 
-        if pipeline_failed:
-            break
+        # Page failed both attempts: drop a visible marker and move on.
+        if translation_data is None:
+            p = doc.add_paragraph()
+            run = p.add_run(f"[Page {idx + 1}: translation failed — original content not included]")
+            run.font.name = 'Calibri'
+            run.font.size = Pt(11)
+            run.font.color.rgb = RGBColor(204, 0, 0)
+            run.italic = True
+            progress_bar.progress((idx + 1) / total_pages)
+            continue
 
         # Build next page's context
         context_candidates = [
@@ -214,7 +240,13 @@ if uploaded_file and st.button("Execute Translation Blueprint"):
         time.sleep(0.5)
 
     if not pipeline_failed:
-        status_msg.success("All pages parsed and compiled successfully!")
+        if failed_pages:
+            status_msg.warning(
+                f"Compiled with {len(failed_pages)} page(s) skipped: "
+                f"{', '.join(map(str, failed_pages))}. The rest translated successfully."
+            )
+        else:
+            status_msg.success("All pages parsed and compiled successfully!")
 
         docx_buffer = io.BytesIO()
         doc.save(docx_buffer)
