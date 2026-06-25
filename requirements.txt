@@ -2,3 +2,4 @@ streamlit
 pypdf
 google-genai
 python-docx
+pdf2image
