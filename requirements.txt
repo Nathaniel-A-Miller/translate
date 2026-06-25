@@ -1,5 +1,6 @@
 streamlit
-pypdf
 google-genai
 python-docx
+pydantic
 pdf2image
+pillow
