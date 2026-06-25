@@ -79,61 +79,74 @@ class PageLayoutTranslation(BaseModel):
         description="Sequential list of all structural layout blocks translated from the page."
     )
 
+# Make sure to run: pip install pdf2image
+from pdf2image import convert_from_bytes
+
 # =====================================================================
-# 5. TRANSLATION PIPELINE CORE ENGINE
+# 5. TRANSLATION PIPELINE CORE ENGINE (UPDATED FOR VISUAL MULTIMODAL)
 # =====================================================================
 if uploaded_file and st.button("Execute Translation Blueprint"):
     client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
 
-    reader = PdfReader(uploaded_file)
-    total_pages = len(reader.pages)
+    # Read file bytes for pdf2image
+    file_bytes = uploaded_file.read()
+    
+    # Convert PDF pages to images so Gemini can visually "read" the Arabic text
+    try:
+        pages_images = convert_from_bytes(file_bytes)
+        total_pages = len(pages_images)
+    except Exception as e:
+        st.error(f"Could not convert PDF to images. Is poppler installed? Error: {e}")
+        st.stop()
 
     if total_pages == 0:
-        st.error("This PDF appears to have no pages, or couldn't be read.")
+        st.error("This PDF appears to have no pages.")
         st.stop()
 
     doc = Document()
-
     progress_bar = st.progress(0)
     status_msg = st.empty()
 
     previous_page_context = "This is the first page. No prior context exists."
     pipeline_failed = False
 
-    for idx in range(total_pages):
-        status_msg.text(f"Processing & translating page {idx + 1} of {total_pages}...")
+    for idx, page_image in enumerate(pages_images):
+        status_msg.text(f"Visually processing & translating page {idx + 1} of {total_pages}...")
 
-        current_page_text = reader.pages[idx].extract_text() or "[Blank Page Text]"
+        # Convert PIL Image to bytes for Gemini API
+        img_byte_arr = io.BytesIO()
+        page_image.save(img_byte_arr, format='JPEG')
+        img_bytes = img_byte_arr.getvalue()
 
+        # Update the prompt to tell Gemini to look at the image and ignore watermarks
         prompt = f"""
-        You are an elite expert document layout translator. Your task is to translate the current page text into {target_lang}.
+        You are an elite expert document layout translator. Your task is to look at the provided page image, 
+        read the text (which may be complex Arabic script or poetry), and translate it into {target_lang}.
 
         CONTEXT FROM PREVIOUS PAGE:
         \"\"\"{previous_page_context}\"\"\"
 
-        Use the previous page context to maintain absolute pronoun consistency, narrative flow, and grammar logic across the page break boundaries.
+        CRITICAL DIRECTIVES:
+        1. IGNORE any background watermarks, website URLs, or repetitive header overlays that are not part of the main text/article body.
+        2. Pay close attention to structural formatting (like poetry hemistichs/couplets or standard paragraphs).
 
         BLOCK ARCHITECTURE LAYOUT DIRECTIVES:
         1. heading_1: Used for top-level primary document title names.
         2. heading_2: Used for section subheadings or chapter dividers.
         3. paragraph: Standard continuous reading paragraphs or bullet records.
         4. page_number: Footers, headers, or isolated indicator numbers matching page coordinates.
-
-        CRITICAL SAFETY WARNING:
-        You are strictly forbidden from skipping, omitting, summarizing, or dropping page numbers or footers.
-        Even if a page number or footer sits at the edge of the text array, you MUST capture it, translate any surrounding words, and classify it explicitly under the 'page_number' block type. Do not let it fade out.
-
-        Current Page Content to Translate:
-        \"\"\"{current_page_text}\"\"\"
         """
 
-        # Call Gemini, with retry-once-then-skip handling so one bad page doesn't kill the run
         translation_data = None
         for attempt in range(2):
             try:
+                # Pass BOTH the image bytes and the text prompt to Gemini
                 response = client.models.generate_content(
                     model="gemini-2.5-flash",
-                    contents=prompt,
+                    contents=[
+                        types.Part.from_bytes(data=img_bytes, mime_type="image/jpeg"),
+                        prompt
+                    ],
                     config=types.GenerateContentConfig(
                         response_mime_type="application/json",
                         response_schema=PageLayoutTranslation,
@@ -142,27 +155,19 @@ if uploaded_file and st.button("Execute Translation Blueprint"):
                 )
                 translation_data = PageLayoutTranslation.model_validate_json(response.text)
                 break
-            except APIError as e:
+            except Exception as e:
                 if attempt == 0:
-                    status_msg.warning(f"Page {idx + 1}: API error ({e}). Retrying once...")
+                    status_msg.warning(f"Page {idx + 1}: Error occurred. Retrying once... ({e})")
                     time.sleep(2)
                     continue
-                st.error(f"Page {idx + 1} failed after retry: {e}. Stopping pipeline.")
+                st.error(f"Page {idx + 1} failed after retry. Stopping pipeline. Error: {e}")
                 pipeline_failed = True
-                break
-            except Exception:
-                # JSON didn't validate against the schema; fall back to raw text as a single paragraph
-                status_msg.warning(f"Formatting anomaly on Page {idx + 1}. Using raw text fallback.")
-                raw_text = getattr(response, "text", "") or "[Could not parse this page]"
-                translation_data = PageLayoutTranslation(
-                    blocks=[ContentBlock(block_type="paragraph", text=raw_text)]
-                )
                 break
 
         if pipeline_failed:
             break
 
-        # Build next page's context from the last non-empty paragraph/heading blocks (skip page numbers)
+        # Build next page's context
         context_candidates = [
             b.text for b in translation_data.blocks
             if b.block_type != "page_number" and b.text.strip()
